@@ -1,0 +1,100 @@
+{
+	"info": {
+		"_postman_id": "a1b2c3d4-e5f6-7890-1234-56789abcdef0",
+		"name": "Spring Boot Artemis JMS - Order Processing",
+		"description": "Collection of requests to test the JMS Order Processing Application (Happy Path, Retry logic, DLQ).",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Happy Path (Success)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"productName\": \"iPhone 15 Pro\",\r\n    \"quantity\": 2,\r\n    \"price\": 999.99,\r\n    \"customerName\": \"Ashfaq\"\r\n}"
+				},
+				"url": {
+					"raw": "http://localhost:8080/api/orders",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"api",
+						"orders"
+					]
+				},
+				"description": "Sends a standard order. This will successfully pass through the Save, Reserve, and Pay steps inside the JMS transaction."
+			},
+			"response": []
+		},
+		{
+			"name": "2. Failure - Inventory (Triggers Retry & DLQ)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"productName\": \"FAIL_INVENTORY\",\r\n    \"quantity\": 1,\r\n    \"price\": 300.00,\r\n    \"customerName\": \"Ashfaq\"\r\n}"
+				},
+				"url": {
+					"raw": "http://localhost:8080/api/orders",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"api",
+						"orders"
+					]
+				},
+				"description": "Simulates an inventory failure. The REST endpoint returns 202 ACCEPTED, but the JMS consumer will fail at step 2, rollback, retry 3 times, and move the message to the DLQ."
+			},
+			"response": []
+		},
+		{
+			"name": "3. Failure - Payment (Triggers Retry & DLQ)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"productName\": \"FAIL_PAYMENT\",\r\n    \"quantity\": 1,\r\n    \"price\": 500.00,\r\n    \"customerName\": \"Ashfaq\"\r\n}"
+				},
+				"url": {
+					"raw": "http://localhost:8080/api/orders",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"api",
+						"orders"
+					]
+				},
+				"description": "Simulates a payment failure. Even though Save and Reserve succeed, the failure at Pay rolls back the whole JMS transaction. You'll see redeliveries in the Spring Boot logs."
+			},
+			"response": []
+		}
+	]
+}

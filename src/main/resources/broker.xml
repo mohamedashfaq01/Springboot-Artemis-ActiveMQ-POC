@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════════
+  ARTEMIS BROKER CONFIGURATION (broker.xml)
+  ═══════════════════════════════════════════════════════════════════════════════
+
+  This file configures the embedded Artemis broker's behavior.
+  The most important settings here are:
+
+  1. DEAD LETTER QUEUE (DLQ)
+     → When a message fails too many times, it goes here instead of being lost
+     → Think of DLQ as a "failed orders" folder for manual review
+
+  2. MAX DELIVERY ATTEMPTS
+     → How many times Artemis will redeliver a failed message before sending to DLQ
+     → We set 3 attempts: Original + 2 retries = 3 total attempts
+
+  3. REDELIVERY DELAY
+     → How long to wait before retrying a failed message
+     → Gives the system time to recover (e.g., if a payment service was temporarily down)
+
+  FLOW:
+    Message fails → Wait 5 seconds → Retry #1
+    Retry #1 fails → Wait 5 seconds → Retry #2
+    Retry #2 fails → Wait 5 seconds → Retry #3
+    Retry #3 fails → Move to DLQ (dead letter queue)
+-->
+<configuration xmlns="urn:activemq"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               xsi:schemaLocation="urn:activemq /schema/artemis-configuration.xsd">
+
+    <core xmlns="urn:activemq:core"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="urn:activemq:core ">
+
+        <!-- ═════════════════════════════════════════════════════════ -->
+        <!-- PERSISTENCE: false for embedded/learning mode            -->
+        <!-- In production, set to true to survive broker restarts    -->
+        <!-- ═════════════════════════════════════════════════════════ -->
+        <persistence-enabled>false</persistence-enabled>
+
+        <!-- ═════════════════════════════════════════════════════════ -->
+        <!-- SECURITY: Disabled for learning. Enable in production!   -->
+        <!-- ═════════════════════════════════════════════════════════ -->
+        <security-enabled>false</security-enabled>
+
+        <!-- ═════════════════════════════════════════════════════════ -->
+        <!-- ADDRESS SETTINGS: This is where retry + DLQ magic happens -->
+        <!-- ═════════════════════════════════════════════════════════ -->
+        <address-settings>
+            <!--
+              match="#" means these settings apply to ALL addresses/queues.
+              You can also create specific settings for specific queues like:
+              <address-setting match="order-queue">
+            -->
+            <address-setting match="#">
+
+                <!--
+                  DEAD LETTER ADDRESS
+                  When a message exhausts all retries, it moves here.
+                  "DLQ" is the conventional name used in enterprise systems.
+                -->
+                <dead-letter-address>DLQ</dead-letter-address>
+
+                <!--
+                  EXPIRY ADDRESS
+                  Messages that exceed their time-to-live (TTL) go here.
+                  Useful for orders that become stale (e.g., flash sale expired).
+                -->
+                <expiry-address>ExpiryQueue</expiry-address>
+
+                <!--
+                  MAX DELIVERY ATTEMPTS = 3
+                  ─────────────────────────
+                  Attempt 1: Original delivery
+                  Attempt 2: First retry
+                  Attempt 3: Second retry (FINAL)
+                  After attempt 3 fails → Message moves to DLQ
+
+                  WHY 3?
+                  → Enough to handle transient failures (network blip, temporary service outage)
+                  → Not too many to cause cascading failures
+                  → Industry standard for most banking/enterprise systems
+                -->
+                <max-delivery-attempts>3</max-delivery-attempts>
+
+                <!--
+                  REDELIVERY DELAY = 5000ms (5 seconds)
+                  ─────────────────────────────────────
+                  Wait 5 seconds before retrying.
+                  This gives the failing service time to recover.
+
+                  In production, you might use exponential backoff:
+                  - Attempt 1: wait 1s
+                  - Attempt 2: wait 5s
+                  - Attempt 3: wait 30s
+                  (Artemis supports this via redelivery-delay-multiplier)
+                -->
+                <redelivery-delay>5000</redelivery-delay>
+
+                <!--
+                  REDELIVERY MULTIPLIER = 2.0
+                  ────────────────────────────
+                  Each retry waits 2x longer than the previous one.
+                  Retry 1: 5s, Retry 2: 10s, Retry 3: 20s
+                  This is "exponential backoff" — very important in production!
+                -->
+                <redelivery-delay-multiplier>2.0</redelivery-delay-multiplier>
+
+                <!--
+                  MAX REDELIVERY DELAY = 30 seconds
+                  Caps the exponential backoff so retries don't wait forever.
+                -->
+                <max-redelivery-delay>30000</max-redelivery-delay>
+
+            </address-setting>
+        </address-settings>
+
+        <!-- ═════════════════════════════════════════════════════════ -->
+        <!-- ADDRESSES: Define our queues                             -->
+        <!-- ═════════════════════════════════════════════════════════ -->
+        <!--
+          In Artemis, every queue belongs to an "address".
+          Think of it like:
+            Address = "Department" (e.g., Order Processing)
+            Queue   = "Mailbox" in that department
+
+          routing-type="anycast" = Point-to-point (one consumer gets each message)
+          routing-type="multicast" = Pub-sub (all consumers get each message)
+        -->
+        <addresses>
+            <!-- Our main order processing queue -->
+            <address name="order-queue">
+                <anycast>
+                    <queue name="order-queue"/>
+                </anycast>
+            </address>
+
+            <!-- Dead Letter Queue — where failed messages go after max retries -->
+            <address name="DLQ">
+                <anycast>
+                    <queue name="DLQ"/>
+                </anycast>
+            </address>
+
+            <!-- Expiry Queue — where expired messages go -->
+            <address name="ExpiryQueue">
+                <anycast>
+                    <queue name="ExpiryQueue"/>
+                </anycast>
+            </address>
+        </addresses>
+
+    </core>
+</configuration>

@@ -1,0 +1,7 @@
+/*
+ * settings.gradle
+ * ----------------
+ * This file defines the project name.
+ * Gradle uses this as the root project identifier.
+ */
+rootProject.name = 'order-processing-jms'

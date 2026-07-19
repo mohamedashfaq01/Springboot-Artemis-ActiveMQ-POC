@@ -1,0 +1,86 @@
+/*
+ * build.gradle
+ * -------------
+ * This is the heart of our Gradle project.
+ *
+ * KEY DEPENDENCIES EXPLAINED:
+ * 
+ * 1. spring-boot-starter-web       → Gives us REST API support (@RestController, @PostMapping, etc.)
+ * 2. spring-boot-starter-artemis   → Integrates Spring JMS with Apache ActiveMQ Artemis
+ *                                     Provides: JmsTemplate, @JmsListener, ConnectionFactory
+ * 3. artemis-server                → Lets us run an EMBEDDED Artemis broker inside our app
+ *                                     (No separate installation needed!)
+ * 4. artemis-jms-server            → JMS layer on top of the embedded broker
+ * 5. jackson-databind              → Converts Java objects ↔ JSON for JMS messages
+ * 6. lombok                        → Reduces boilerplate (@Slf4j, @Data, @Builder, etc.)
+ */
+
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.4.4'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.learnwithashfaq'
+version = '1.0.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // ═══════════════════════════════════════════════════════════════
+    // SPRING BOOT STARTERS
+    // ═══════════════════════════════════════════════════════════════
+
+    // REST API support — gives us @RestController, @PostMapping, embedded Tomcat
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // Spring JMS + Artemis client — gives us JmsTemplate, @JmsListener, ConnectionFactory
+    // This is the BRIDGE between Spring and Artemis
+    implementation 'org.springframework.boot:spring-boot-starter-artemis'
+
+    // ═══════════════════════════════════════════════════════════════
+    // EMBEDDED ARTEMIS BROKER
+    // ═══════════════════════════════════════════════════════════════
+    // These two let us run Artemis INSIDE our Spring Boot app.
+    // In production, you'd use an external Artemis server and remove these.
+
+    // Core Artemis server — the message broker engine
+    implementation 'org.apache.activemq:artemis-server'
+
+    // JMS support for the embedded server
+    implementation 'org.apache.activemq:artemis-jms-server'
+
+    // ═══════════════════════════════════════════════════════════════
+    // JSON SERIALIZATION
+    // ═══════════════════════════════════════════════════════════════
+    // Jackson converts our Java DTOs (OrderEvent) to JSON strings
+    // so they can travel through JMS queues as text messages.
+
+
+    // ═══════════════════════════════════════════════════════════════
+    // LOMBOK — Reduces boilerplate code
+    // ═══════════════════════════════════════════════════════════════
+    // @Slf4j     → auto-generates a logger
+    // @Data      → auto-generates getters, setters, toString, equals, hashCode
+    // @Builder   → auto-generates the builder pattern
+    // @NoArgsConstructor / @AllArgsConstructor → auto-generates constructors
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // ═══════════════════════════════════════════════════════════════
+    // TESTING
+    // ═══════════════════════════════════════════════════════════════
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
