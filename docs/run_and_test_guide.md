@@ -1,19 +1,12 @@
-# 🚀 How to Run and Test the Application
+# 🚀 How to Run, Test, and Package the Application
 
-This guide explains how to start the application and manually test the JMS configuration, including happy paths, retries, and the Dead Letter Queue (DLQ).
+This guide explains how to run the app, test all scenarios manually, and package it for deployment.
 
 ---
 
-## 1. Starting the Application
+## 1. Running the Application
 
-The application uses an **embedded Artemis broker**, which means the message queue starts automatically when the Spring Boot application starts. You don't need to install or run any external servers like Docker.
-
-### Option A: Using your IDE (IntelliJ / Eclipse / VS Code)
-Simply run the main class:
-`com.learnwithashfaq.artemis.ArtemisJmsApplication.java`
-
-### Option B: Using Gradle (Command Line)
-Open your terminal in the project root directory and run:
+### Option A: Run from source (Development)
 ```bash
 # Windows
 .\gradlew.bat bootRun
@@ -21,98 +14,251 @@ Open your terminal in the project root directory and run:
 # Mac/Linux
 ./gradlew bootRun
 ```
+The app will start on **`http://localhost:8080`**.
 
-Wait until you see the following log confirming the application has started:
-`Started ArtemisJmsApplication in X seconds (process running for Y)`
+### Option B: Package and run as a JAR (Production-like)
+```bash
+# Step 1: Build
+.\gradlew.bat build        # Windows
+./gradlew build            # Mac/Linux
+
+# Step 2: Run the JAR
+java -jar build/libs/Springboot-Artemis-JMS-ActiveMQ-Example-1.0.0.jar
+```
+> **Tip:** Use `.\gradlew.bat build -x test` to skip tests during the build.
 
 ---
 
-## 2. Testing Scenarios
+## 2. Running the Tests
 
-You can test the application using **Postman**, **cURL**, or any REST client. The API is available at:
-`POST http://localhost:8080/api/orders`
+### Run All Tests (Unit + Integration)
+```bash
+.\gradlew.bat test         # Windows
+./gradlew test             # Mac/Linux
+```
+
+### Run Only Unit Tests
+```bash
+.\gradlew.bat test --tests "com.learnwithashfaq.artemis.controller.*"
+.\gradlew.bat test --tests "com.learnwithashfaq.artemis.service.*"
+.\gradlew.bat test --tests "com.learnwithashfaq.artemis.producer.*"
+.\gradlew.bat test --tests "com.learnwithashfaq.artemis.consumer.*"
+```
+
+### Run Only Integration Tests
+```bash
+.\gradlew.bat test --tests "com.learnwithashfaq.artemis.integration.*"
+```
+
+### View Test Report
+After running tests, open the HTML report:
+```
+build/reports/tests/test/index.html
+```
+
+**Expected: 24 tests, 0 failures.** See [`testing_guide.md`](testing_guide.md) for a full breakdown of all tests.
 
 ---
 
-### Scenario A: The "Happy Path" (Success)
-This scenario simulates a completely successful order process. All 3 steps (Save, Reserve, Pay) will pass.
+## 3. Accessing the H2 Database Console
 
-**Request (cURL):**
+The embedded H2 database has a browser-based console you can use to inspect order data in real time.
+
+> **See [`h2_console_guide.md`](h2_console_guide.md) for a detailed walkthrough.**
+
+Quick access:
+1. Start the application.
+2. Open: **`http://localhost:8080/h2-console`**
+3. Enter:
+   - **JDBC URL:** `jdbc:h2:mem:testdb`
+   - **Username:** `sa`
+   - **Password:** *(leave blank)*
+4. Click **Connect**.
+5. Run: `SELECT * FROM ORDERS;`
+
+---
+
+## 4. Manual Testing Scenarios (via Postman or cURL)
+
+The API endpoint is: `POST http://localhost:8080/api/orders`
+
+All requests return `HTTP 202 ACCEPTED` immediately. The actual processing (success or failure) happens asynchronously in the background — watch your **application logs** and the **H2 console** to see the result.
+
+---
+
+### ✅ Scenario A: Happy Path (Full Success)
+
 ```bash
 curl -X POST http://localhost:8080/api/orders \
--H "Content-Type: application/json" \
--d '{
+  -H "Content-Type: application/json" \
+  -d '{
     "productName": "iPhone 15 Pro",
     "quantity": 2,
     "price": 999.99,
     "customerName": "Ashfaq"
-}'
+  }'
 ```
 
-**Expected Outcome:**
-1. You will receive an immediate `HTTP 202 ACCEPTED` response.
-2. In the application console logs, you will see:
-   - `JMS PRODUCER — SENDING ORDER`
-   - `JMS CONSUMER — MESSAGE RECEIVED`
-   - `✅ ALL 3 STEPS COMPLETED SUCCESSFULLY!`
-   - `✅ ORDER PROCESSED SUCCESSFULLY! JMS Transaction will COMMIT.`
+**PowerShell:**
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8080/api/orders" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{"productName":"iPhone 15 Pro","quantity":2,"price":999.99,"customerName":"Ashfaq"}'
+```
+
+**Expected Response:**
+```json
+{
+  "message": "Order placed successfully! It will be processed in the background.",
+  "orderId": "ORD-A2127BF3",
+  "status": "ACCEPTED",
+  "timestamp": "2026-08-30T22:53:12"
+}
+```
+
+**What happens in the background:**
+```
+📝 STEP 1/3 — ✅ Order saved to database (status: PROCESSING)
+📦 STEP 2/3 — ✅ Inventory reserved
+💳 STEP 3/3 — ✅ Payment processed
+✅ ALL 3 STEPS COMPLETED! (status: COMPLETED)
+```
+→ DB Status: **COMPLETED**
 
 ---
 
-### Scenario B: Inventory Failure (Triggers Retries)
-This scenario simulates what happens if the Inventory service fails. We configured the `OrderProcessingService` to deliberately throw an `InventoryException` if the `productName` is `"FAIL_INVENTORY"`.
+### ❌ Scenario B: Payment Failure (Triggers Retries → DLQ)
 
-**Request (cURL):**
 ```bash
 curl -X POST http://localhost:8080/api/orders \
--H "Content-Type: application/json" \
--d '{
-    "productName": "FAIL_INVENTORY",
-    "quantity": 1,
-    "price": 300.00,
-    "customerName": "Ashfaq"
-}'
-```
-
-**Expected Outcome:**
-1. The REST API still returns `HTTP 202 ACCEPTED`.
-2. The consumer starts processing:
-   - Step 1 (Save) ✅
-   - Step 2 (Inventory) ❌ `INVENTORY FAILURE for Order...`
-3. A JMS Transaction **ROLLBACK** occurs.
-4. Artemis waits for the 5-second `redelivery-delay`.
-5. The message is **redelivered** automatically. You will see `Attempt: 2 of 3`.
-6. This repeats until `Attempt: 3 of 3` fails, and then the message is permanently moved to the **DLQ** (Dead Letter Queue).
-
----
-
-### Scenario C: Payment Failure (Triggers Retries)
-This scenario ensures that even if Step 1 and Step 2 succeed, a failure at the final step (Payment) rolls back the ENTIRE transaction. We trigger this using `"FAIL_PAYMENT"`.
-
-**Request (cURL):**
-```bash
-curl -X POST http://localhost:8080/api/orders \
--H "Content-Type: application/json" \
--d '{
+  -H "Content-Type: application/json" \
+  -d '{
     "productName": "FAIL_PAYMENT",
     "quantity": 1,
     "price": 500.00,
     "customerName": "Ashfaq"
-}'
+  }'
 ```
 
-**Expected Outcome:**
-1. Step 1 (Save) ✅ and Step 2 (Inventory) ✅ will pass.
-2. Step 3 (Payment) ❌ will fail.
-3. The JMS transaction rolls back.
-4. During the automatic retries (Attempt 2 and Attempt 3), **Step 1 and Step 2 will execute AGAIN**. 
-   *(Note: This highlights why enterprise systems require idempotent operations, as explained in the walkthrough document).*
-5. After the 3rd failed attempt, the message goes to the DLQ.
+**What happens in the background:**
+```
+📝 STEP 1/3 — ✅ Order saved
+📦 STEP 2/3 — ✅ Inventory reserved
+💳 STEP 3/3 — ❌ PAYMENT FAILURE! Routing to ERROR_QUEUE (retry 1/3)...
+
+(ErrorConsumer waits 500ms → re-queues to order-queue)
+
+💳 STEP 3/3 — ❌ PAYMENT FAILURE! Routing to ERROR_QUEUE (retry 2/3)...
+💳 STEP 3/3 — ❌ PAYMENT FAILURE! MAX RETRIES EXHAUSTED → DEAD_LETTER_QUEUE
+```
+→ DB Status: **PROCESSING** (never reached COMPLETED)
 
 ---
 
-## 3. Viewing the DLQ (Dead Letter Queue) Messages
+### 📦 Scenario C: Inventory Failure (Triggers Retries → DLQ)
 
-Because we are using an *embedded* broker running purely in-memory (`vm://0`), the DLQ contents are lost when the application stops. 
+```bash
+curl -X POST http://localhost:8080/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "productName": "FAIL_INVENTORY",
+    "quantity": 1,
+    "price": 300.00,
+    "customerName": "Ashfaq"
+  }'
+```
 
-In a production scenario with an external Artemis server, you would log into the **Artemis Web Console** (usually `http://localhost:8161/console`) to manually view the failed messages sitting in the `DLQ` and choose to delete them, edit them, or push them back to the `order-queue` for reprocessing once the issue (like a broken payment gateway) is fixed.
+**What happens:** Same retry flow as payment failure, but fails at Step 2 (Inventory).
+
+→ DB Status: **PROCESSING**
+
+---
+
+### 💀 Scenario D: Fatal Error (Straight to DLQ — No Retries)
+
+```bash
+curl -X POST http://localhost:8080/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "productName": "FATAL_ERROR",
+    "quantity": 1,
+    "price": 100.00,
+    "customerName": "Ashfaq"
+  }'
+```
+
+**What happens:**
+```
+❌ FATAL DATA CORRUPTION DETECTED → InvalidDataException thrown
+❌ FATAL ERROR: Moving DIRECTLY to DEAD_LETTER_QUEUE (no retries)
+```
+→ DB Status: **No record** (fatal error fires before Step 1 saves)
+
+---
+
+### ❌ Scenario E: Validation Errors (HTTP 400)
+
+```bash
+# Missing product name
+curl -X POST http://localhost:8080/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{"productName":"","quantity":2,"price":999.99,"customerName":"Ashfaq"}'
+
+# Invalid quantity
+curl -X POST http://localhost:8080/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{"productName":"iPhone","quantity":0,"price":999.99,"customerName":"Ashfaq"}'
+
+# Missing customer
+curl -X POST http://localhost:8080/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{"productName":"iPhone","quantity":2,"price":999.99,"customerName":""}'
+```
+
+**Expected Response (HTTP 400):**
+```json
+{
+  "error": "Bad Request",
+  "message": "Product name is required!"
+}
+```
+These fail at the service layer before reaching JMS at all.
+
+---
+
+## 5. Useful SQL Queries for H2 Console
+
+```sql
+-- See all orders
+SELECT ORDER_ID, PRODUCT_NAME, STATUS, TOTAL_AMOUNT, CUSTOMER_NAME, ORDER_DATE
+FROM ORDERS
+ORDER BY ORDER_DATE DESC;
+
+-- Count by status
+SELECT STATUS, COUNT(*) AS COUNT
+FROM ORDERS
+GROUP BY STATUS;
+
+-- Find a specific order
+SELECT * FROM ORDERS WHERE ORDER_ID = 'ORD-A2127BF3';
+
+-- Find all completed orders
+SELECT * FROM ORDERS WHERE STATUS = 'COMPLETED';
+
+-- Find orders stuck in PROCESSING (failed retries)
+SELECT * FROM ORDERS WHERE STATUS = 'PROCESSING';
+```
+
+---
+
+## 6. Viewing DLQ Messages
+
+Since we use an embedded in-memory broker, DLQ contents are **not visible in the H2 console** — messages in `DEAD_LETTER_QUEUE` are held in Artemis memory, not in the database.
+
+To inspect them in a real enterprise environment, you would:
+1. Use an **external Artemis broker** with its built-in Web Console at `http://localhost:8161/console`.
+2. Browse to `DEAD_LETTER_QUEUE`.
+3. View, retry, or purge the failed messages.
+
+For this embedded application, the best way to confirm DLQ routing is by watching the **application logs** in the terminal.

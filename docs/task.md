@@ -35,10 +35,23 @@
 - [x] Create `PaymentException.java`
 - [x] Create `GlobalExceptionHandler.java`
 
-## Step 9 — Testing & Verification
+## Step 9 — Integration Testing
 - [x] Build the project
 - [x] Run and test happy path
 - [x] Test failure + retry + DLQ
+- [x] 9 integration tests (OrderFlowIntegrationTest.java)
 
-## Step 10 — Learnings & Best Practices
-- [x] Create walkthrough with learnings
+## Step 10 — Unit Testing
+- [x] OrderControllerTest.java (@WebMvcTest)
+- [x] OrderServiceTest.java (Mockito)
+- [x] OrderProcessingServiceTest.java (Mockito)
+- [x] OrderProducerTest.java (Mockito)
+- [x] OrderConsumerTest.java (Mockito)
+- [x] All 24 tests passing
+
+## Step 11 — Documentation
+- [x] project_summary.md (architecture, design decisions, file structure)
+- [x] run_and_test_guide.md (all 5 test scenarios, SQL queries)
+- [x] h2_console_guide.md (H2 console access guide)
+- [x] testing_guide.md (all tests + JUnit 5 & Mockito reference)
+- [x] walkthrough.md (learnings & best practices)

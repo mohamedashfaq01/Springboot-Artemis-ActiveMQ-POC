@@ -1,51 +1,52 @@
 package com.learnwithashfaq.artemis.service;
 
 import com.learnwithashfaq.artemis.dto.OrderEvent;
+import com.learnwithashfaq.artemis.entity.OrderEntity;
 import com.learnwithashfaq.artemis.exception.InventoryException;
+import com.learnwithashfaq.artemis.exception.InvalidDataException;
 import com.learnwithashfaq.artemis.exception.PaymentException;
+import com.learnwithashfaq.artemis.repository.OrderRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 /**
- * OrderProcessingService — Simulates the 3-step order processing pipeline.
+ * OrderProcessingService — The 3-step order processing pipeline.
  *
  * ═══════════════════════════════════════════════════════════════
- * THE 3 STEPS (TRANSACTIONAL):
+ * WHAT CHANGED FROM THE SIMULATION VERSION?
  * ═══════════════════════════════════════════════════════════════
  *
- *   Step 1: SAVE ORDER      → Persist order to database
- *   Step 2: RESERVE STOCK   → Reserve inventory in warehouse
- *   Step 3: PROCESS PAYMENT → Charge the customer
+ * Previously, saveOrder() just logged "saved". Now it ACTUALLY:
+ *   1. Creates an OrderEntity from the OrderEvent
+ *   2. Persists it to H2 database via OrderRepository
+ *   3. Updates the status to COMPLETED after all steps pass
  *
- * If ANY step fails, the entire JMS transaction rolls back.
- * The message goes back to the queue and gets retried.
- *
- * ═══════════════════════════════════════════════════════════════
- * HOW TO TRIGGER FAILURES (FOR TESTING):
- * ═══════════════════════════════════════════════════════════════
- *
- * Use these special product names when calling the API:
- *
- *   "FAIL_PAYMENT"   → Steps 1 & 2 succeed, Step 3 fails
- *                       Shows: message retry + DLQ after 3 attempts
- *
- *   "FAIL_INVENTORY" → Step 1 succeeds, Step 2 fails
- *                       Shows: earlier failure, same retry behavior
- *
- *   "iPhone 15 Pro"  → All steps succeed → order completed! ✅
- *   (or any other name)
+ * The failure simulation (FAIL_PAYMENT, FAIL_INVENTORY) still works
+ * exactly the same way — throwing exceptions that trigger JMS rollback.
  *
  * ═══════════════════════════════════════════════════════════════
- * WHY SIMULATE INSTEAD OF USING REAL DB/PAYMENT?
+ * IDEMPOTENCY — WHY IT MATTERS NOW
  * ═══════════════════════════════════════════════════════════════
  *
- * This keeps the focus on JMS concepts (transactions, retries, DLQ)
- * without the complexity of setting up databases, payment gateways, etc.
- * In production, these methods would call real repositories and APIs.
+ * With a real database, retries become a problem:
+ *   Attempt 1: saveOrder() ✅ → reserveInventory() ✅ → processPayment() ❌
+ *   Attempt 2: saveOrder() ← Would INSERT a DUPLICATE row!
+ *
+ * To handle this, saveOrder() checks if the order already exists:
+ *   - If orderId exists → skip insert (idempotent)
+ *   - If orderId is new → insert new row
+ *
+ * This is how enterprise systems handle JMS retries safely.
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class OrderProcessingService {
+
+    private final OrderRepository orderRepository;
 
     /**
      * Processes an order through all 3 steps.
@@ -61,6 +62,12 @@ public class OrderProcessingService {
         log.info("│     Order ID: {}",  orderEvent.getOrderId());
         log.info("└─────────────────────────────────────────────────┘");
 
+        // ⚠️ DELIBERATE FATAL ERROR for testing unrecoverable exceptions
+        if ("FATAL_ERROR".equalsIgnoreCase(orderEvent.getProductName())) {
+            log.error("❌ FATAL DATA CORRUPTION DETECTED for Order [{}]", orderEvent.getOrderId());
+            throw new InvalidDataException("Product name indicates a fatal unrecoverable error.");
+        }
+
         // ═══ STEP 1: SAVE ORDER ═══
         saveOrder(orderEvent);
 
@@ -70,6 +77,9 @@ public class OrderProcessingService {
         // ═══ STEP 3: PROCESS PAYMENT ═══
         processPayment(orderEvent);
 
+        // ═══ ALL STEPS PASSED — Mark order as COMPLETED ═══
+        updateOrderStatus(orderEvent.getOrderId(), "COMPLETED");
+
         log.info("┌─────────────────────────────────────────────────┐");
         log.info("│     ✅ ALL 3 STEPS COMPLETED SUCCESSFULLY!      │");
         log.info("│     Order [{}] → COMPLETED", orderEvent.getOrderId());
@@ -77,41 +87,59 @@ public class OrderProcessingService {
     }
 
     /**
-     * STEP 1: Save Order to Database.
+     * STEP 1: Save Order to Database (IDEMPOTENT).
      *
-     * In a real application, this would:
-     *   - Call orderRepository.save(orderEntity)
-     *   - Generate database sequence ID
-     *   - Set initial status to PROCESSING
+     * Checks if the order already exists (from a previous retry attempt).
+     * If it does, we skip the insert to avoid duplicates.
+     * If it doesn't, we create a new OrderEntity and persist it.
      *
-     * For learning: we just log it.
+     * STATUS FLOW:
+     *   saveOrder()      → Status: PROCESSING
+     *   processPayment() → Status: COMPLETED (updated after all steps)
      */
     private void saveOrder(OrderEvent orderEvent) {
         log.info("📝 STEP 1/3 — Saving Order [{}] to database...", orderEvent.getOrderId());
 
-        // Simulate database save (takes ~100ms)
-        simulateProcessingTime(100);
+        // IDEMPOTENCY CHECK: Has this order been saved by a previous retry?
+        Optional<OrderEntity> existingOrder = orderRepository.findByOrderId(orderEvent.getOrderId());
 
-        log.info("📝 STEP 1/3 — ✅ Order [{}] saved to database successfully!",
+        if (existingOrder.isPresent()) {
+            log.info("📝 STEP 1/3 — ⏭️ Order [{}] already exists in database (retry detected). " +
+                     "Skipping insert. Current status: {}",
+                    orderEvent.getOrderId(), existingOrder.get().getStatus());
+
+            // Reset status back to PROCESSING for this retry attempt
+            updateOrderStatus(orderEvent.getOrderId(), "PROCESSING");
+            return;
+        }
+
+        // Build the JPA entity from the event DTO
+        OrderEntity entity = OrderEntity.builder()
+                .orderId(orderEvent.getOrderId())
+                .productName(orderEvent.getProductName())
+                .quantity(orderEvent.getQuantity())
+                .price(orderEvent.getPrice())
+                .totalAmount(orderEvent.getTotalAmount())
+                .customerName(orderEvent.getCustomerName())
+                .orderDate(orderEvent.getOrderDate())
+                .status("PROCESSING")
+                .build();
+
+        orderRepository.save(entity);
+
+        log.info("📝 STEP 1/3 — ✅ Order [{}] saved to database successfully! Status: PROCESSING",
                 orderEvent.getOrderId());
     }
 
     /**
      * STEP 2: Reserve Inventory.
      *
-     * In a real application, this would:
-     *   - Call inventoryService.reserve(productId, quantity)
-     *   - Decrement available stock in warehouse system
-     *   - Throw InventoryException if out of stock
-     *
-     * For testing: Sending product "FAIL_INVENTORY" triggers failure here.
+     * In a real application, this would call an inventory microservice.
+     * For testing: product "FAIL_INVENTORY" triggers failure.
      */
     private void reserveInventory(OrderEvent orderEvent) {
         log.info("📦 STEP 2/3 — Reserving {} units of '{}' in inventory...",
                 orderEvent.getQuantity(), orderEvent.getProductName());
-
-        // Simulate inventory check (takes ~150ms)
-        simulateProcessingTime(150);
 
         // ⚠️ DELIBERATE FAILURE for testing
         if ("FAIL_INVENTORY".equalsIgnoreCase(orderEvent.getProductName())) {
@@ -132,23 +160,12 @@ public class OrderProcessingService {
     /**
      * STEP 3: Process Payment.
      *
-     * In a real application, this would:
-     *   - Call paymentGateway.charge(customerId, amount)
-     *   - Handle payment gateway responses (approved, declined, timeout)
-     *   - Throw PaymentException on failure
-     *
-     * For testing: Sending product "FAIL_PAYMENT" triggers failure here.
-     *
-     * NOTE: This is the LAST step. If it fails after Steps 1 & 2 succeeded,
-     * the JMS transaction rolls back → message retried → Steps 1 & 2 run again.
-     * This is why IDEMPOTENCY matters (covered in best practices).
+     * In a real application, this would call a payment gateway API.
+     * For testing: product "FAIL_PAYMENT" triggers failure.
      */
     private void processPayment(OrderEvent orderEvent) {
         log.info("💳 STEP 3/3 — Processing payment of ${} for Order [{}]...",
                 orderEvent.getTotalAmount(), orderEvent.getOrderId());
-
-        // Simulate payment gateway call (takes ~200ms)
-        simulateProcessingTime(200);
 
         // ⚠️ DELIBERATE FAILURE for testing
         if ("FAIL_PAYMENT".equalsIgnoreCase(orderEvent.getProductName())) {
@@ -167,15 +184,17 @@ public class OrderProcessingService {
     }
 
     /**
-     * Simulates processing time (like a database call or API request).
-     * In real applications, this latency comes naturally from external systems.
+     * Updates the status of an existing order in the database.
+     *
+     * Called after all 3 steps succeed to mark the order as COMPLETED.
+     * Also used during retries to reset status back to PROCESSING.
      */
-    private void simulateProcessingTime(long milliseconds) {
-        try {
-            Thread.sleep(milliseconds);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.warn("Processing interrupted!");
-        }
+    private void updateOrderStatus(String orderId, String newStatus) {
+        orderRepository.findByOrderId(orderId).ifPresent(order -> {
+            String oldStatus = order.getStatus();
+            order.setStatus(newStatus);
+            orderRepository.save(order);
+            log.info("📋 Order [{}] status updated: {} → {}", orderId, oldStatus, newStatus);
+        });
     }
 }

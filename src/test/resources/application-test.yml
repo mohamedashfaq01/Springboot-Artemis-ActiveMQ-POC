@@ -1,0 +1,58 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST CONFIGURATION (application-test.yml)
+# ═══════════════════════════════════════════════════════════════════════════════
+# This overrides application.yml when running with @ActiveProfiles("test").
+# Key differences from main config:
+#   1. Separate H2 database instance (testdb) — isolated from dev
+#   2. ddl-auto: create-drop → Fresh database for each test run
+#   3. Reduced logging noise for cleaner test output
+
+spring:
+  # Separate H2 instance for tests — doesn't interfere with dev database
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      # create-drop → Creates tables at startup, drops them at shutdown
+      # Guarantees a clean slate for every test run
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  # H2 console disabled in tests (not needed)
+  h2:
+    console:
+      enabled: false
+
+  # Embedded Artemis for tests
+  artemis:
+    mode: embedded
+    broker-url: vm://0
+    embedded:
+      enabled: true
+      queues: order-queue,ERROR_QUEUE,DEAD_LETTER_QUEUE
+
+  jms:
+    pub-sub-domain: false
+    listener:
+      session-transacted: true
+      acknowledge-mode: auto
+      concurrency: 1
+      max-concurrency: 1
+
+# Reduced logging for test clarity
+logging:
+  level:
+    com.learnwithashfaq.artemis: INFO
+    org.springframework.jms: WARN
+    org.apache.activemq.artemis: WARN
+    org.hibernate.SQL: DEBUG
+
+server:
+  port: 0   # Random port — avoids conflicts when tests run in parallel

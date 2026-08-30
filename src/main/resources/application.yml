@@ -9,6 +9,38 @@ spring:
     name: order-processing-jms
 
   # ─────────────────────────────────────────────────────────────────────────────
+  # H2 DATABASE CONFIGURATION
+  # ─────────────────────────────────────────────────────────────────────────────
+  # H2 runs in-memory — data resets on every restart.
+  # jdbc:h2:mem:orderdb → database name is "orderdb"
+  # DB_CLOSE_DELAY=-1   → keeps the DB alive as long as the JVM runs
+  datasource:
+    url: jdbc:h2:mem:orderdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  # Enable the H2 web console at http://localhost:8080/h2-console
+  # You can inspect the database while the app is running!
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JPA / HIBERNATE CONFIGURATION
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ddl-auto: update → Hibernate auto-creates/updates tables from @Entity classes
+  # show-sql: true   → Prints SQL statements in console (great for learning!)
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
   # ARTEMIS BROKER CONFIGURATION
   # ─────────────────────────────────────────────────────────────────────────────
   # mode: embedded → Artemis runs INSIDE our app (no separate installation!)
@@ -23,7 +55,7 @@ spring:
     broker-url: vm://0
     embedded:
       enabled: true
-      queues: order-queue   # Auto-create this queue on startup
+      queues: order-queue,ERROR_QUEUE,DEAD_LETTER_QUEUE   # Auto-create queues on startup
 
   # ─────────────────────────────────────────────────────────────────────────────
   # JMS CONFIGURATION

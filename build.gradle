@@ -59,11 +59,15 @@ dependencies {
     implementation 'org.apache.activemq:artemis-jms-server'
 
     // ═══════════════════════════════════════════════════════════════
-    // JSON SERIALIZATION
+    // JPA + DATABASE
     // ═══════════════════════════════════════════════════════════════
-    // Jackson converts our Java DTOs (OrderEvent) to JSON strings
-    // so they can travel through JMS queues as text messages.
+    // Spring Data JPA — provides @Entity, JpaRepository, auto table creation
+    // This lets us persist orders to a real database instead of just logging.
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 
+    // H2 — lightweight in-memory database, perfect for dev & testing
+    // No installation needed! Database lives in memory and resets on restart.
+    runtimeOnly 'com.h2database:h2'
 
     // ═══════════════════════════════════════════════════════════════
     // LOMBOK — Reduces boilerplate code
@@ -79,6 +83,11 @@ dependencies {
     // TESTING
     // ═══════════════════════════════════════════════════════════════
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // Awaitility — clean async polling for JMS tests
+    // Instead of Thread.sleep(), we poll: "wait up to 10s until order is COMPLETED"
+    testImplementation 'org.awaitility:awaitility:4.2.2'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
 }
 
 tasks.named('test') {
