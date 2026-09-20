@@ -11,6 +11,13 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
  * OrderController — REST endpoint for placing orders.
@@ -57,6 +64,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/orders")
 @Slf4j
 @RequiredArgsConstructor
+@Tag(name = "Order Processing API", description = "Endpoints for creating asynchronous orders")
 public class OrderController {
 
     private final OrderService orderService;
@@ -93,6 +101,27 @@ public class OrderController {
      *     "customerName": "Ashfaq"
      * }
      */
+    @Operation(
+            summary = "Place a new order",
+            description = "Submits a new order to the JMS queue for asynchronous processing.",
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = OrderRequest.class),
+                            examples = {
+                                    @ExampleObject(name = "✅ Happy Path", summary = "A successful order", value = "{\n  \"productName\": \"iPhone 15 Pro\",\n  \"quantity\": 2,\n  \"price\": 999.99,\n  \"customerName\": \"Ashfaq\"\n}"),
+                                    @ExampleObject(name = "❌ Payment Failure", summary = "Simulates a payment failure (triggers retry)", value = "{\n  \"productName\": \"FAIL_PAYMENT\",\n  \"quantity\": 1,\n  \"price\": 500.00,\n  \"customerName\": \"Ashfaq\"\n}"),
+                                    @ExampleObject(name = "❌ Inventory Failure", summary = "Simulates an inventory failure (triggers retry)", value = "{\n  \"productName\": \"FAIL_INVENTORY\",\n  \"quantity\": 1,\n  \"price\": 300.00,\n  \"customerName\": \"Ashfaq\"\n}"),
+                                    @ExampleObject(name = "❌ Fatal Error", summary = "Simulates a fatal error (goes straight to DLQ)", value = "{\n  \"productName\": \"FATAL_ERROR\",\n  \"quantity\": 1,\n  \"price\": 100.00,\n  \"customerName\": \"Ashfaq\"\n}")
+                            }
+                    )
+            )
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "202", description = "Order accepted for processing", 
+                    content = @Content(schema = @Schema(implementation = OrderResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Invalid request payload")
+    })
     @PostMapping
     public ResponseEntity<OrderResponse> placeOrder(@RequestBody OrderRequest orderRequest) {
 

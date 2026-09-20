@@ -41,6 +41,9 @@ dependencies {
 
     // REST API support — gives us @RestController, @PostMapping, embedded Tomcat
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    
+    // OpenAPI Swagger UI — for API documentation and interactive testing
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.8'
 
     // Spring JMS + Artemis client — gives us JmsTemplate, @JmsListener, ConnectionFactory
     // This is the BRIDGE between Spring and Artemis
